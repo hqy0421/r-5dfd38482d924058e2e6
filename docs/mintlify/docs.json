@@ -28,6 +28,7 @@
         "pages": [
           "preprocessing.html",
           "feature_engineering.html",
+          "feature_pipeline.html",
           "date_features.html",
           "evaluation.html",
           "losses.html",
