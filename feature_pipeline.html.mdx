@@ -1,0 +1,386 @@
+---
+title: Feature Pipelines | UtilsForecast
+description: Forecasting pipelines whose features declare their dependencies
+---
+
+### `FeatureNode`
+
+```python
+FeatureNode(name, fn, outputs, dependencies=())
+```
+
+A feature computation with explicit dependencies and outputs.
+
+**Parameters:**
+
+Name | Type | Description | Default
+---- | ---- | ----------- | -------
+`name` | <code>[str](#str)</code> | Unique name that identifies this node in the graph. | *required*
+`fn` | <code>[callable](#callable)</code> | Function that computes the features. It receives a dataframe with the original business columns plus the outputs of its declared dependencies (and nothing else) as first positional argument, and whichever of ``freq``, ``h``, ``id_col`` and ``time_col`` its signature accepts as keyword arguments. Rows can come in any order, they're aligned by the keys.<br/>The return value defines how the future values are obtained:<br/>- a dataframe with the key columns and the declared outputs. It's   evaluated twice, once on the history and once on the future keys,   so it sees the future values of the business columns (from   ``X_df``) and of its dependencies. - a ``(historic, future)`` pair of such dataframes. It's evaluated   once on the history and the future part is reused, which is what   features that project the history forward (e.g. ``fourier`` or   ``trend``) need. | *required*
+`outputs` | <code>sequence of str</code> | Columns produced by this node. They have to be unique across the graph and can't shadow the keys, the target or the original columns of the input dataframe. | *required*
+`dependencies` | <code>sequence of str</code> | Names of the nodes whose outputs this node needs. | <code>()</code>
+
+Since a node only gets what it declared, two nodes that compute the same
+kind of feature can depend on different inputs without leaking columns into
+each other.
+
+#### `FeatureNode.dependencies`
+
+```python
+dependencies = dependencies
+```
+
+#### `FeatureNode.fn`
+
+```python
+fn = fn
+```
+
+#### `FeatureNode.name`
+
+```python
+name = name
+```
+
+#### `FeatureNode.outputs`
+
+```python
+outputs = outputs
+```
+
+
+### `feature_node`
+
+```python
+feature_node(name, outputs, dependencies=())
+```
+
+Decorator that turns a function into a :class:`FeatureNode`.
+
+```python
+@feature_node("weekly", outputs=["sin1_7", "cos1_7"])
+def weekly(df, freq, h, id_col, time_col):
+    ...
+```
+
+
+### `compute_features`
+
+```python
+compute_features(df, nodes, freq, h=0, id_col='unique_id', time_col='ds', target_col='y', X_df=None)
+```
+
+Compute the features of a dependency graph for history and forecast.
+
+**Parameters:**
+
+Name | Type | Description | Default
+---- | ---- | ----------- | -------
+`df` | <code>pandas or polars DataFrame</code> | Dataframe with ids, times and the original business columns. | *required*
+`nodes` | <code>sequence of FeatureNode</code> | Nodes of the graph. Dependencies run before their dependents and every node runs at most once per pass, no matter how many other nodes use it. | *required*
+`freq` | <code>[str](#str) or [int](#int)</code> | Frequency of the data. Must be a valid pandas or polars offset alias, or an integer. | *required*
+`h` | <code>[int](#int)</code> | Forecast horizon. Defaults to 0, which skips the future features. | <code>0</code>
+`id_col` | <code>[str](#str)</code> | Column that identifies each serie. Defaults to 'unique_id'. | <code>'unique_id'</code>
+`time_col` | <code>[str](#str)</code> | Column that identifies each timestep, its values can be timestamps or integers. Defaults to 'ds'. | <code>'ds'</code>
+`target_col` | <code>[str](#str)</code> | Column that contains the target. It's never passed to the future features. Defaults to 'y'. | <code>'y'</code>
+`X_df` | <code>pandas or polars DataFrame</code> | Future values of the business columns. Its keys must cover the future keys exactly. | <code>None</code>
+
+**Returns:**
+
+Name | Type | Description
+---- | ---- | -----------
+`FeatureSet` | <code>[FeatureSet](#utilsforecast.feature_pipeline.FeatureSet)</code> | The historic and future features aligned by the key columns.
+
+**Raises:**
+
+Type | Description
+---- | -----------
+<code>[ValueError](#ValueError)</code> | If the graph has cycles, missing dependencies or conflicting output names, or if a node returns data whose keys don't match the expected ones.
+
+
+### `FeaturePipeline`
+
+```python
+FeaturePipeline(nodes, freq, h=1, id_col='unique_id', time_col='ds', target_col='y', model_name='model', model_names=None)
+```
+
+A forecasting pipeline built from a graph of feature nodes.
+
+Each node declares its dependencies and the columns it produces. Nodes only
+see the original business columns plus the outputs they declared, they run
+after their dependencies and a shared node runs only once per pass. Both the
+historic and the future results are aligned by the key columns, so nodes can
+return their rows in any order.
+
+The features produced by the graph are the exact inputs of the model:
+``fit`` receives the historic features together with the target, while the
+future features and ``predict`` never see it.
+
+**Parameters:**
+
+Name | Type | Description | Default
+---- | ---- | ----------- | -------
+`nodes` | <code>sequence of FeatureNode</code> | Nodes of the graph. | *required*
+`freq` | <code>[str](#str) or [int](#int)</code> | Frequency of the data. Must be a valid pandas or polars offset alias, or an integer. | *required*
+`h` | <code>[int](#int)</code> | Forecast horizon. Defaults to 1. | <code>1</code>
+`id_col` | <code>[str](#str)</code> | Column that identifies each serie. Defaults to 'unique_id'. | <code>'unique_id'</code>
+`time_col` | <code>[str](#str)</code> | Column that identifies each timestep, its values can be timestamps or integers. Defaults to 'ds'. | <code>'ds'</code>
+`target_col` | <code>[str](#str)</code> | Column that contains the target. Defaults to 'y'. | <code>'y'</code>
+`model_name` | <code>[str](#str)</code> | Name of the column with the predictions. Defaults to 'model'. | <code>'model'</code>
+`model_names` | <code>sequence of str</code> | Names of the columns when the model returns more than one prediction per row. | <code>None</code>
+
+<details class="example" open markdown="1">
+<summary>Example</summary>
+
+>>> pipe = FeaturePipeline(nodes=[weekly, linear], freq="D", h=7)
+>>> pipe.fit(train_df, model=model)
+>>> result = pipe.predict()
+>>> result.future_features.head()
+>>> result.forecast.head()
+
+</details>
+
+#### `FeaturePipeline.feature_names`
+
+```python
+feature_names: List[str]
+```
+
+Columns produced by the graph, in graph order.
+
+#### `FeaturePipeline.features_`
+
+```python
+features_: Optional[DataFrame] = None
+```
+
+#### `FeaturePipeline.fit`
+
+```python
+fit(df, model=None)
+```
+
+Fit the model on the features produced by the graph.
+
+**Parameters:**
+
+Name | Type | Description | Default
+---- | ---- | ----------- | -------
+`df` | <code>pandas or polars DataFrame</code> | Historic data. It must contain the key columns, the target and the business columns used by the nodes. | *required*
+`model` | <code>[object](#object)</code> | Object with ``fit(X, y)`` and ``predict(X)`` methods. ``X`` is a :class:`FeatureMatrix` whose columns and values are exactly the outputs of the graph, and ``y`` is a numpy array with the target. | <code>None</code>
+
+**Returns:**
+
+Name | Type | Description
+---- | ---- | -----------
+`FeaturePipeline` | <code>[FeaturePipeline](#utilsforecast.feature_pipeline.FeaturePipeline)</code> | The fitted pipeline.
+
+#### `FeaturePipeline.freq`
+
+```python
+freq = freq
+```
+
+#### `FeaturePipeline.future_features_`
+
+```python
+future_features_: Optional[DataFrame] = None
+```
+
+#### `FeaturePipeline.h`
+
+```python
+h = h
+```
+
+#### `FeaturePipeline.id_col`
+
+```python
+id_col = id_col
+```
+
+#### `FeaturePipeline.model_`
+
+```python
+model_: Any = None
+```
+
+#### `FeaturePipeline.model_name`
+
+```python
+model_name = model_name
+```
+
+#### `FeaturePipeline.model_names`
+
+```python
+model_names = None if model_names is None else list(model_names)
+```
+
+#### `FeaturePipeline.nodes`
+
+```python
+nodes = list(nodes)
+```
+
+#### `FeaturePipeline.predict`
+
+```python
+predict(X_df=None)
+```
+
+Forecast the future keys with the fitted model.
+
+**Parameters:**
+
+Name | Type | Description | Default
+---- | ---- | ----------- | -------
+`X_df` | <code>pandas or polars DataFrame</code> | Future values of the business columns. Its keys must cover the future keys exactly. It can't contain the target column. | <code>None</code>
+
+**Returns:**
+
+Name | Type | Description
+---- | ---- | -----------
+`ForecastResult` | <code>[ForecastResult](#utilsforecast.feature_pipeline.ForecastResult)</code> | The historic features, the future features that were handed to the model and the predictions.
+
+**Raises:**
+
+Type | Description
+---- | -----------
+<code>[ValueError](#ValueError)</code> | If the pipeline isn't fitted, or if the features or the predictions don't cover the future keys exactly. In those cases no partial forecast is returned.
+
+#### `FeaturePipeline.target_col`
+
+```python
+target_col = target_col
+```
+
+#### `FeaturePipeline.time_col`
+
+```python
+time_col = time_col
+```
+
+#### `FeaturePipeline.transform`
+
+```python
+transform(df, X_df=None)
+```
+
+Compute the features of the graph without fitting a model.
+
+**Parameters:**
+
+Name | Type | Description | Default
+---- | ---- | ----------- | -------
+`df` | <code>pandas or polars DataFrame</code> | Historic data with the business columns. | *required*
+`X_df` | <code>pandas or polars DataFrame</code> | Future values of the business columns. | <code>None</code>
+
+**Returns:**
+
+Name | Type | Description
+---- | ---- | -----------
+`FeatureSet` | <code>[FeatureSet](#utilsforecast.feature_pipeline.FeatureSet)</code> | Historic and future features aligned by the key columns.
+
+
+### `FeatureSet`
+
+Bases: <code>[NamedTuple](#typing.NamedTuple)</code>
+
+Aligned historic and future features.
+
+**Attributes:**
+
+Name | Type | Description
+---- | ---- | -----------
+[`features`](#utilsforecast.feature_pipeline.FeatureSet.features) | <code>[DataFrame](#utilsforecast.compat.DataFrame)</code> | Dataframe with the key columns and the features computed for the historic data, in the row order of the input dataframe.
+[`future_features`](#utilsforecast.feature_pipeline.FeatureSet.future_features) | <code>[DataFrame](#utilsforecast.compat.DataFrame)</code> | Dataframe with the future keys and their features. It's empty when no horizon was requested.
+
+#### `FeatureSet.features`
+
+```python
+features: DataFrame
+```
+
+#### `FeatureSet.future_features`
+
+```python
+future_features: DataFrame
+```
+
+
+### `ForecastResult`
+
+Bases: <code>[NamedTuple](#typing.NamedTuple)</code>
+
+Features and forecasts produced by a :class:`FeaturePipeline`.
+
+**Attributes:**
+
+Name | Type | Description
+---- | ---- | -----------
+[`features`](#utilsforecast.feature_pipeline.ForecastResult.features) | <code>[DataFrame](#utilsforecast.compat.DataFrame)</code> | Historic features, aligned by the key columns.
+[`future_features`](#utilsforecast.feature_pipeline.ForecastResult.future_features) | <code>[DataFrame](#utilsforecast.compat.DataFrame)</code> | Future features, aligned by the future keys. These are the exact values that were passed to the model.
+[`forecast`](#utilsforecast.feature_pipeline.ForecastResult.forecast) | <code>[DataFrame](#utilsforecast.compat.DataFrame)</code> | Dataframe with the key columns and the predictions.
+
+#### `ForecastResult.features`
+
+```python
+features: DataFrame
+```
+
+#### `ForecastResult.forecast`
+
+```python
+forecast: DataFrame
+```
+
+#### `ForecastResult.future_features`
+
+```python
+future_features: DataFrame
+```
+
+
+### `FeatureMatrix`
+
+Bases: <code>[ndarray](#numpy.ndarray)</code>
+
+A numpy array that keeps track of the feature columns it holds.
+
+Models receive this instead of a plain array, so the exact columns that the
+graph produced are available through ``columns``. It also supports indexing
+by column name.
+
+<details class="example" open markdown="1">
+<summary>Example</summary>
+
+>>> X = pipe.predict().future_features
+>>> X.columns
+['sin1_7', 'cos1_7']
+>>> X["sin1_7"]
+
+</details>
+
+#### `FeatureMatrix.columns`
+
+```python
+columns: Optional[List[str]]
+```
+
+#### `FeatureMatrix.to_numpy`
+
+```python
+to_numpy()
+```
+
+Return the values as a plain numpy array.
+
+#### `FeatureMatrix.to_pandas`
+
+```python
+to_pandas()
+```
+
+Return the values as a pandas dataframe with the feature names.
+
